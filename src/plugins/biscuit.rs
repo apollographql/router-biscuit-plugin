@@ -41,9 +41,7 @@ impl Plugin for Biscuit {
         tracing::info!("{}", init.config.message);
 
         let root = biscuit::PublicKey::from_bytes_hex(&init.config.public_root)?;
-        Ok(Biscuit {
-            root,
-        })
+        Ok(Biscuit { root })
     }
 
     fn supergraph_service(&self, service: supergraph::BoxService) -> supergraph::BoxService {
@@ -139,23 +137,7 @@ impl Biscuit {
             }
         }
 
-        let opt_token_str = match request.supergraph_request.headers().get("Authorization") {
-            None => None,
-            Some(value) => {
-                let value = value.to_str()?;
-                println!("Authorization: {}", value);
-                if !value.starts_with("Bearer ") {
-                    return Err(Box::<dyn Error + Send + Sync>::from("not a bearer token"));
-                }
-                Some(&value[7..])
-            }
-        };
-
-        println!("parsing token from: {:?}", opt_token_str);
-        let opt_token = match opt_token_str {
-            None => None,
-            Some(s) => Some(biscuit::Biscuit::from_base64(s, &self.root)?),
-        };
+        let opt_token = extract_token(&request.supergraph_request, &self.root)?;
 
         if let Some(token) = opt_token.as_ref() {
             authorizer.add_token(token)?;
@@ -165,7 +147,7 @@ impl Biscuit {
         println!("authorizer:\n{}", authorizer.print_world());
         res?;
 
-        if let Some(token) = opt_token_str {
+        if let Some(token) = extract_token_string(&request.supergraph_request)? {
             request.context.insert("biscuit", token.to_string())?;
         }
 
@@ -195,14 +177,41 @@ impl Biscuit {
     }
 }
 
+fn extract_token_string(
+    request: &http::Request<graphql::Request>,
+) -> Result<Option<&str>, BoxError> {
+    Ok(match request.headers().get("Authorization") {
+        None => None,
+        Some(value) => {
+            let value = value.to_str()?;
+            println!("Authorization: {}", value);
+            if !value.starts_with("Bearer ") {
+                return Err(Box::<dyn Error + Send + Sync>::from("not a bearer token"));
+            }
+            Some(&value[7..])
+        }
+    })
+}
+
+fn extract_token(
+    request: &http::Request<graphql::Request>,
+    root: &biscuit::PublicKey,
+) -> Result<Option<biscuit::Biscuit>, BoxError> {
+    let opt_token_str = extract_token_string(request)?;
+
+    println!("parsing token from: {:?}", opt_token_str);
+    Ok(match opt_token_str {
+        None => None,
+        Some(s) => Some(biscuit::Biscuit::from_base64(s, root)?),
+    })
+}
+
 // This macro allows us to use it in our plugin registry!
 // register_plugin takes a group name, and a plugin name.
 register_plugin!("biscuit_1", "biscuit", Biscuit);
 
 #[cfg(test)]
 mod tests {
-    use std::error::Error;
-
     use apollo_router::graphql;
     use apollo_router::plugin::test::MockSubgraph;
     use apollo_router::services::subgraph;
@@ -215,6 +224,8 @@ mod tests {
     use biscuit_auth as biscuit;
     use tower::BoxError;
     use tower::ServiceExt;
+
+    use crate::plugins::biscuit::extract_token;
 
     const SCHEMA: &'static str = r#"schema
     @core(feature: "https://specs.apollo.dev/core/v0.1")
@@ -349,8 +360,8 @@ type Organization
             .unwrap();
 
         let token = biscuit!(r#"check if query($query), ["me", "test"].contains($query);"#)
-        .build(&root_keypair)
-        .unwrap();
+            .build(&root_keypair)
+            .unwrap();
         let token = token.append(block!(r#"check if query("me")"#)).unwrap();
 
         let request = supergraph::Request::fake_builder()
@@ -387,23 +398,7 @@ type Organization
             subgraph = service_name
         );
 
-        let opt_token_str = match request.subgraph_request.headers().get("Authorization") {
-            None => None,
-            Some(value) => {
-                let value = value.to_str()?;
-                println!("Authorization: {}", value);
-                if !value.starts_with("Bearer ") {
-                    return Err(Box::<dyn Error + Send + Sync>::from("not a bearer token"));
-                }
-                Some(&value[7..])
-            }
-        };
-
-        println!("parsing token from: {:?}", opt_token_str);
-        let opt_token = match opt_token_str {
-            None => None,
-            Some(s) => Some(biscuit::Biscuit::from_base64(s, &root)?),
-        };
+        let opt_token = extract_token(&request.subgraph_request, &root)?;
 
         if let Some(token) = opt_token.as_ref() {
             authorizer.add_token(token)?;
@@ -456,7 +451,6 @@ type Organization
                                         .build());
                                     }
                                 panic!("unexpected")
-    
                             }
                         }
                     }).boxed()
