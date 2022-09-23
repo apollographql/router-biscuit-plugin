@@ -492,6 +492,7 @@ dependencies = [
  "biscuit-auth",
  "futures",
  "hex 0.4.3",
+ "http",
  "schemars",
  "serde",
  "serde_json",

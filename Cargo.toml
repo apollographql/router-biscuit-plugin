@@ -21,6 +21,7 @@ async-trait = "0.1.52"
 biscuit-auth = { git = "https://github.com/biscuit-auth/biscuit-rust", version = "3.0.0-alpha2" }
 futures = "0.3.21"
 hex = "0.4.3"
+http = "0.2.8"
 schemars = "0.8.10"
 serde = "1.0.136"
 serde_json = "1.0.79"

@@ -1,4 +1,5 @@
 use apollo_compiler::values::OperationType;
+use apollo_router::graphql;
 use apollo_router::layers::ServiceBuilderExt;
 use apollo_router::plugin::Plugin;
 use apollo_router::plugin::PluginInit;
@@ -6,6 +7,7 @@ use apollo_router::register_plugin;
 use apollo_router::services::subgraph;
 use apollo_router::services::supergraph;
 use biscuit::macros::authorizer;
+use biscuit::macros::block;
 use biscuit_auth as biscuit;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -16,14 +18,14 @@ use tower::ServiceExt;
 use std::error::Error;
 use std::ops::ControlFlow;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Biscuit {
     #[allow(dead_code)]
     configuration: Conf,
     root: biscuit::PublicKey,
 }
 
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
 struct Conf {
     // Put your plugin configuration here. It will automatically be deserialized from JSON.
     // Always put some sort of config here, even if it is just a bool to say that the plugin is enabled,
@@ -48,24 +50,45 @@ impl Plugin for Biscuit {
     }
 
     fn supergraph_service(&self, service: supergraph::BoxService) -> supergraph::BoxService {
+        let this = self.clone();
         ServiceBuilder::new()
-            .checkpoint(|request: supergraph::Request| {
-                // Do some async call here to auth, and decide if to continue or not.
-
-                Ok(ControlFlow::Continue(request))
+            .checkpoint(move |mut request: supergraph::Request| {
+                match this.validate_request(&mut request) {
+                    Ok(()) => Ok(ControlFlow::Continue(request)),
+                    Err(e) => Ok(ControlFlow::Break(
+                        supergraph::Response::error_builder()
+                            .error(graphql::Error::builder().message(e.to_string()).build())
+                            .status_code(http::StatusCode::UNAUTHORIZED)
+                            .context(request.context)
+                            .build()?,
+                    )),
+                }
             })
-            .buffered()
             .service(service)
             .boxed()
     }
 
     fn subgraph_service(
         &self,
-        _subgraph_name: &str,
+        service_name: &str,
         service: subgraph::BoxService,
     ) -> subgraph::BoxService {
+        let this = self.clone();
+        let service_name = service_name.to_string();
+
         ServiceBuilder::new()
-            .map_request(|request: subgraph::Request| request)
+            .checkpoint(move |mut request: subgraph::Request| {
+                match this.attenuate(&service_name, &mut request) {
+                    Ok(()) => Ok(ControlFlow::Continue(request)),
+                    Err(e) => Ok(ControlFlow::Break(
+                        subgraph::Response::error_builder()
+                            .error(graphql::Error::builder().message(e.to_string()).build())
+                            .status_code(http::StatusCode::UNAUTHORIZED)
+                            .context(request.context)
+                            .build()?,
+                    )),
+                }
+            })
             .service(service)
             .boxed()
     }
@@ -99,16 +122,9 @@ impl Biscuit {
         };
 
         let mut authorizer = authorizer!(
-            r#"    
-    // a verifier can come with allow/deny policies. While checks are all tested
-    // and must all succeeed, allow/deny policies are tried one by one in order,
-    // and we stop verification on the first that matches
-    //
-    // here we will check that the token has the corresponding right
-    allow if right("/a/file1.txt", "read");
-    // explicit catch-all deny. here it is not necessary: if no policy
-    // matches, a default deny applies
-    deny if true;
+            r#"
+            deny if query($root_operation), authorized_queries($queries), !$queries.contains($root_operation);
+            allow if true
  "#,
         );
 
@@ -131,12 +147,15 @@ impl Biscuit {
             None => None,
             Some(value) => {
                 let value = value.to_str()?;
+                println!("Authorization: {}", value);
                 if !value.starts_with("Bearer ") {
                     return Err(Box::<dyn Error + Send + Sync>::from("not a bearer token"));
                 }
-                Some(&value[6..])
+                Some(&value[7..])
             }
         };
+
+        println!("parsing token from: {:?}", opt_token_str);
         let opt_token = match opt_token_str {
             None => None,
             Some(s) => Some(biscuit::Biscuit::from_base64(s, &self.root)?),
@@ -146,10 +165,34 @@ impl Biscuit {
             authorizer.add_token(token)?;
         }
 
-        authorizer.authorize()?;
+        let res = authorizer.authorize();
+        println!("authorizer:\n{}", authorizer.print_world());
+        res?;
 
         if let Some(token) = opt_token_str {
             request.context.insert("biscuit", token.to_string())?;
+        }
+
+        Ok(())
+    }
+
+    fn attenuate(
+        &self,
+        service_name: &str,
+        request: &mut subgraph::Request,
+    ) -> Result<(), BoxError> {
+        if let Ok(Some(s)) = request.context.get::<_, String>("biscuit") {
+            let token = biscuit::UnverifiedBiscuit::from_base64(s)?;
+
+            let attenuated_token = token.append(block!(
+                "check if subgraph({subgraph});",
+                subgraph = service_name,
+            ))?;
+
+            request.subgraph_request.headers_mut().insert(
+                "Authorization",
+                format!("Bearer {}", attenuated_token.to_base64()?).parse()?,
+            );
         }
 
         Ok(())
@@ -162,26 +205,102 @@ register_plugin!("biscuit_1", "biscuit", Biscuit);
 
 #[cfg(test)]
 mod tests {
+    use std::error::Error;
+
+    use apollo_router::graphql;
+    use apollo_router::plugin::test::MockSubgraph;
+    use apollo_router::services::subgraph;
     use apollo_router::services::supergraph;
+    use apollo_router::MockedSubgraphs;
     use apollo_router::TestHarness;
+    use biscuit::macros::authorizer;
+    use biscuit::macros::biscuit;
+    use biscuit_auth as biscuit;
     use tower::BoxError;
     use tower::ServiceExt;
 
+    const SCHEMA: &'static str = r#"schema
+    @core(feature: "https://specs.apollo.dev/core/v0.1")
+    @core(feature: "https://specs.apollo.dev/join/v0.1")
+    @core(feature: "https://specs.apollo.dev/inaccessible/v0.1")
+     {
+    query: Query
+}
+directive @core(feature: String!) repeatable on SCHEMA
+directive @join__field(graph: join__Graph, requires: join__FieldSet, provides: join__FieldSet) on FIELD_DEFINITION
+directive @join__type(graph: join__Graph!, key: join__FieldSet) repeatable on OBJECT | INTERFACE
+directive @join__owner(graph: join__Graph!) on OBJECT | INTERFACE
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+directive @inaccessible on OBJECT | FIELD_DEFINITION | INTERFACE | UNION
+scalar join__FieldSet
+
+enum join__Graph {
+   USER @join__graph(name: "user", url: "http://localhost:4001/graphql")
+   ORGA @join__graph(name: "organization", url: "http://localhost:4002/graphql")
+}
+
+type Query {
+   me: User @join__field(graph: USER)
+   otherUser(id: ID!): User @join__field(graph: USER)
+}
+
+type User
+@join__owner(graph: USER)
+@join__type(graph: ORGA, key: "id")
+@join__type(graph: USER, key: "id") {
+   id: ID!
+   name: String
+   private_data: String
+   activeOrganization: Organization
+}
+
+type Organization
+@join__owner(graph: ORGA)
+@join__type(graph: ORGA, key: "id")
+@join__type(graph: USER, key: "id") {
+   id: ID
+   creatorUser: User
+}"#;
+
     #[tokio::test]
     async fn basic_test() -> Result<(), BoxError> {
+        let root_keypair = biscuit::KeyPair::new();
+
+        let mut subgraphs = MockedSubgraphs::default();
+        subgraphs.insert
+            ("user", MockSubgraph::builder().with_json(
+                    serde_json::json!{{"query":"{currentUser{activeOrganization{__typename id}}}"}},
+                    serde_json::json!{{"data": {"currentUser": { "activeOrganization": null }}}}
+                ).build());
+        subgraphs.insert("orga", MockSubgraph::default());
         let test_harness = TestHarness::builder()
             .configuration_json(serde_json::json!({
+                "include_subgraph_errors": {
+                    "all": true
+                },
                 "plugins": {
                     "biscuit_1.biscuit": {
-                        "message" : "Starting my plugin"
+                        "message" : "Starting my plugin",
+                        "public_root": root_keypair.public().to_bytes_hex(),
                     }
                 }
             }))
             .unwrap()
+            .schema(SCHEMA)
+            .extra_plugin(subgraphs)
             .build()
             .await
             .unwrap();
-        let request = supergraph::Request::canned_builder().build().unwrap();
+
+        let token = biscuit!(r#"authorized_queries("me");"#)
+            .build(&root_keypair)
+            .unwrap();
+
+        let request = supergraph::Request::fake_builder()
+            .header("Authorization", format!("Bearer {}", token.to_base64()?))
+            .query("query { me { activeOrganization { id creatorUser { name } } } }")
+            .build()
+            .unwrap();
         let mut streamed_response = test_harness.oneshot(request).await?;
 
         let first_response = streamed_response
@@ -189,14 +308,204 @@ mod tests {
             .await
             .expect("couldn't get primary response");
 
+        println!("first response: {:?}", first_response);
         assert!(first_response.data.is_some());
 
-        println!("first response: {:?}", first_response);
         let next = streamed_response.next_response().await;
         println!("next response: {:?}", next);
 
         // You could keep calling .next_response() until it yields None if you're expexting more parts.
         assert!(next.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn failing_test() -> Result<(), BoxError> {
+        let root_keypair = biscuit::KeyPair::new();
+
+        let mut subgraphs = MockedSubgraphs::default();
+        subgraphs.insert
+            ("user", MockSubgraph::builder().with_json(
+                    serde_json::json!{{"query":"{currentUser{activeOrganization{__typename id}}}"}},
+                    serde_json::json!{{"data": {"currentUser": { "activeOrganization": null }}}}
+                ).build());
+        subgraphs.insert("organization", MockSubgraph::default());
+        let test_harness = TestHarness::builder()
+            .configuration_json(serde_json::json!({
+                "include_subgraph_errors": {
+                    "all": true
+                },
+                "plugins": {
+                    "biscuit_1.biscuit": {
+                        "message" : "Starting my plugin",
+                        "public_root": root_keypair.public().to_bytes_hex(),
+                    }
+                }
+            }))
+            .unwrap()
+            .schema(SCHEMA)
+            .extra_plugin(subgraphs)
+            .build()
+            .await
+            .unwrap();
+
+        let token = biscuit!(r#"authorized_queries("me");"#)
+            .build(&root_keypair)
+            .unwrap();
+
+        let request = supergraph::Request::fake_builder()
+            .header("Authorization", format!("Bearer {}", token.to_base64()?))
+            .query("query { otherUser(1) { activeOrganization { id creatorUser { name } } } }")
+            .build()
+            .unwrap();
+        let mut streamed_response = test_harness.oneshot(request).await?;
+
+        let first_response = streamed_response
+            .next_response()
+            .await
+            .expect("couldn't get primary response");
+
+        println!("first response: {:?}", first_response);
+        assert_eq!(
+            first_response.errors.get(0).unwrap().message,
+            "authorization failed"
+        );
+
+        Ok(())
+    }
+
+    fn validate(
+        root: biscuit::PublicKey,
+        service_name: &str,
+        request: &subgraph::Request,
+    ) -> Result<(), BoxError> {
+        let mut authorizer = authorizer!(
+            r#"
+        subgraph({subgraph});
+        allow if true
+"#,
+            subgraph = service_name
+        );
+
+        let opt_token_str = match request.subgraph_request.headers().get("Authorization") {
+            None => None,
+            Some(value) => {
+                let value = value.to_str()?;
+                println!("Authorization: {}", value);
+                if !value.starts_with("Bearer ") {
+                    return Err(Box::<dyn Error + Send + Sync>::from("not a bearer token"));
+                }
+                Some(&value[7..])
+            }
+        };
+
+        println!("parsing token from: {:?}", opt_token_str);
+        let opt_token = match opt_token_str {
+            None => None,
+            Some(s) => Some(biscuit::Biscuit::from_base64(s, &root)?),
+        };
+
+        if let Some(token) = opt_token.as_ref() {
+            authorizer.add_token(token)?;
+        }
+
+        let res = authorizer.authorize();
+        println!("authorizer:\n{}", authorizer.print_world());
+        res?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn attenuation() -> Result<(), BoxError> {
+        let root_keypair = biscuit::KeyPair::new();
+        let root_public = root_keypair.public();
+
+        //let subgraphs = plugin.subgraph_service(subgraph_name, service)
+        let test_harness = TestHarness::builder()
+            .configuration_json(serde_json::json!({
+                "include_subgraph_errors": {
+                    "all": true
+                },
+                "plugins": {
+                    "biscuit_1.biscuit": {
+                        "message" : "Starting my plugin",
+                        "public_root": root_keypair.public().to_bytes_hex(),
+                    }
+                }
+            }))
+            .unwrap()
+            .schema(SCHEMA)
+            .subgraph_hook(move |service_name, _| {
+
+                if service_name == "user" {
+                    tower::service_fn(move |request: subgraph::Request| async move {
+                        match validate(root_public, "usera", &request) {
+                            Err(e) => Ok(
+                                subgraph::Response::error_builder()
+                                    .error(graphql::Error::builder().message(e.to_string()).build())
+                                    .status_code(http::StatusCode::UNAUTHORIZED)
+                                    .context(request.context)
+                                    .build()?,
+                            ),
+                            Ok(()) => {
+                                    if request.subgraph_request.body().query.as_deref() == Some("{currentUser{activeOrganization{__typename id}}}") {
+                                        return Ok(subgraph::Response::fake_builder()
+                                        .data(serde_json::json!{{"data": {"currentUser": { "activeOrganization": null }}}})
+                                        .status_code(http::StatusCode::OK)
+                                        .context(request.context)
+                                        .build());
+                                    }
+                                panic!("unexpected")
+    
+                            }
+                        }
+                    }).boxed()
+                } else if service_name == "organization" {
+                    tower::service_fn(move |request: subgraph::Request| async move {
+                        match validate(root_public, "organization", &request) {
+                            Err(e) => Ok(
+                                subgraph::Response::error_builder()
+                                    .error(graphql::Error::builder().message(e.to_string()).build())
+                                    .status_code(http::StatusCode::UNAUTHORIZED)
+                                    .context(request.context)
+                                    .build()?,
+                            ),
+                            Ok(()) => {
+                                todo!()
+                            }
+                        }
+                    }).boxed()
+                } else {
+                    panic!()
+                }
+
+            })
+            .build()
+            .await
+            .unwrap();
+
+        let token = biscuit!(r#"authorized_queries("me");"#)
+            .build(&root_keypair)
+            .unwrap();
+
+        let request = supergraph::Request::fake_builder()
+            .header("Authorization", format!("Bearer {}", token.to_base64()?))
+            .query("query { otherUser(1) { activeOrganization { id creatorUser { name } } } }")
+            .build()
+            .unwrap();
+        let mut streamed_response = test_harness.oneshot(request).await?;
+
+        let first_response = streamed_response
+            .next_response()
+            .await
+            .expect("couldn't get primary response");
+
+        println!("first response: {:?}", first_response);
+        assert_eq!(
+            first_response.errors.get(0).unwrap().message,
+            "authorization failed"
+        );
+
         Ok(())
     }
 }
