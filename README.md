@@ -1,83 +1,34 @@
-# Apollo Router project
+# Biscuit router plugin
 
-This generated project is set up to create a custom Apollo Router binary that may include plugins that you have written.
+This router plugin tests authorization with [Biscuit tokens](https://www.biscuitsec.org/), which support
+public key signatures and offline attenuatin, along with a Datalog based authorization language.
 
-> Note: The Apollo Router is made available under the Elastic License v2.0 (ELv2).
-> Read [our licensing page](https://www.apollographql.com/docs/resources/elastic-license-v2-faq/) for more details.
+The goal here is to explore authorization patterns.
 
-# Compile the router
+## Experimentations
 
-To create a debug build use the following command.
-```bash
-cargo build
-```
-Your debug binary is now located in `target/debug/router`
+### Router level authorization on the request
 
-For production, you will want to create a release build.
-```bash
-cargo build --release
-```
-Your release binary is now located in `target/release/router`
+The router verifies that the root operations are in a set of authorized operations.
+The token provides the list of authorized operations as a fact containing a set.
+If the token is attenuated to remove operations, this should be validated as well.
 
-# Run the Apollo Router
+### Subgraph query attenuation
 
-1. Download the example schema
+The router will take the client provided token, and send it to the subgraph so it can
+authorize queries too. But what happens if a subgraph is compromised? Can they take
+that token and query the router, or other subgraphs?
 
-   ```bash
-   curl -sSL https://supergraph.demo.starstuff.dev/ > supergraph-schema.graphql
-   ```
+Using attenuation, the router mints a token that can only be used to query the subgraph,
+and that would not be authorized when querying the router or another subgraph.
 
-2. Run the Apollo Router
+### Router level filtering on the response
 
-   During development it is convenient to use `cargo run` to run the Apollo Router as it will
-   ```bash 
-   cargo run -- --hot-reload --config router.yaml --supergraph supergraph-schema.graphql
-   ```
+The token or authorizer policies provide fine grained rules on what kind of information
+is available.
 
-> If you are using managed federation you can set APOLLO_KEY and APOLLO_GRAPH_REF environment variables instead of specifying the supergraph as a file.
-
-# Create a plugin
-
-1. From within your project directory scaffold a new plugin
-   ```bash
-   cargo router plugin create hello_world
-   ```
-2. Select the type of plugin you want to scaffold:
-   ```bash
-   Select a plugin template:
-   > "basic"
-   "auth"
-   "tracing"
-   ```
-
-   The different templates are:
-   * basic - a barebones plugin.
-   * auth - a basic authentication plugin that could make an external call.
-   * tracing - a plugin that adds a custom span and a log message.
-
-   Choose `basic`.
-
-4. Add the plugin to the `router.yaml`
-   ```yaml
-   plugins:
-     starstuff.hello_world:
-       message: "Starting my plugin"
-   ```
-
-5. Run the Apollo Router and see your plugin start up
-   ```bash
-   cargo run -- --hot-reload --config router.yaml --supergraph supergraph-schema.graphql
-   ```
-
-   In your output you should see something like:
-   ```bash
-   2022-05-21T09:16:33.160288Z  INFO router::plugins::hello_world: Starting my plugin
-   ```
-
-# Remove a plugin
-
-1. From within your project run the following command. It makes a best effort to remove the plugin, but your mileage may vary.
-   ```bash
-   cargo router plugin remove hello_world
-   ```
-
+Examples:
+- the `User` type contains a `private` field that is accessible
+if the token provided user id matches the one of the `User` object
+- the organization has a `private` field only accessible if the
+ token provided user id matches a user that belongs to the organization
