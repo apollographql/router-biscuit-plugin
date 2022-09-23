@@ -20,8 +20,6 @@ use std::ops::ControlFlow;
 
 #[derive(Debug, Clone)]
 struct Biscuit {
-    #[allow(dead_code)]
-    configuration: Conf,
     root: biscuit::PublicKey,
 }
 
@@ -44,7 +42,6 @@ impl Plugin for Biscuit {
 
         let root = biscuit::PublicKey::from_bytes_hex(&init.config.public_root)?;
         Ok(Biscuit {
-            configuration: init.config,
             root,
         })
     }
@@ -123,7 +120,6 @@ impl Biscuit {
 
         let mut authorizer = authorizer!(
             r#"
-            deny if query($root_operation), authorized_queries($queries), !$queries.contains($root_operation);
             allow if true
  "#,
         );
@@ -215,6 +211,7 @@ mod tests {
     use apollo_router::TestHarness;
     use biscuit::macros::authorizer;
     use biscuit::macros::biscuit;
+    use biscuit::macros::block;
     use biscuit_auth as biscuit;
     use tower::BoxError;
     use tower::ServiceExt;
@@ -242,6 +239,7 @@ enum join__Graph {
 type Query {
    me: User @join__field(graph: USER)
    otherUser(id: ID!): User @join__field(graph: USER)
+   test: String @join__field(graph: USER)
 }
 
 type User
@@ -292,9 +290,10 @@ type Organization
             .await
             .unwrap();
 
-        let token = biscuit!(r#"authorized_queries("me");"#)
+        let token = biscuit!(r#"check if query($query), ["me", "test"].contains($query);"#)
             .build(&root_keypair)
             .unwrap();
+        let token = token.append(block!(r#"check if query("me")"#)).unwrap();
 
         let request = supergraph::Request::fake_builder()
             .header("Authorization", format!("Bearer {}", token.to_base64()?))
@@ -349,13 +348,14 @@ type Organization
             .await
             .unwrap();
 
-        let token = biscuit!(r#"authorized_queries("me");"#)
-            .build(&root_keypair)
-            .unwrap();
+        let token = biscuit!(r#"check if query($query), ["me", "test"].contains($query);"#)
+        .build(&root_keypair)
+        .unwrap();
+        let token = token.append(block!(r#"check if query("me")"#)).unwrap();
 
         let request = supergraph::Request::fake_builder()
             .header("Authorization", format!("Bearer {}", token.to_base64()?))
-            .query("query { otherUser(1) { activeOrganization { id creatorUser { name } } } }")
+            .query("query { otherUser(id: 1) { activeOrganization { id creatorUser { name } } } }")
             .build()
             .unwrap();
         let mut streamed_response = test_harness.oneshot(request).await?;
@@ -490,7 +490,7 @@ type Organization
 
         let request = supergraph::Request::fake_builder()
             .header("Authorization", format!("Bearer {}", token.to_base64()?))
-            .query("query { otherUser(1) { activeOrganization { id creatorUser { name } } } }")
+            .query("query { me { activeOrganization { id creatorUser { name } } } }")
             .build()
             .unwrap();
         let mut streamed_response = test_harness.oneshot(request).await?;
