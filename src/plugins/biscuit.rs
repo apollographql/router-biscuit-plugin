@@ -23,6 +23,147 @@ struct Biscuit {
     root: biscuit::PublicKey,
 }
 
+impl Biscuit {
+    /// called in the supergraph plugin
+    ///
+    /// rejects a token if a check fails in the token
+    fn validate_request(&self, request: &mut supergraph::Request) -> Result<(), BoxError> {
+        /*** Parse the query to observe the requested operation ***/
+        let compiler = apollo_compiler::ApolloCompiler::new(
+            &request
+                .supergraph_request
+                .body()
+                .query
+                .as_deref()
+                .expect("there should be a query by now"),
+        );
+
+        let ops = compiler.operations();
+        let operation = match request.supergraph_request.body().operation_name.as_ref() {
+            None => ops.get(0),
+            Some(name) => ops.iter().find(|op| op.name() == Some(name)),
+        };
+
+        let operation = match operation {
+            None => {
+                return Err(Box::<dyn Error + Send + Sync>::from(
+                    "cannot find operation",
+                ))
+            }
+            Some(op) => op,
+        };
+
+        /*** Create the authorizer
+         *
+         * A fact will be added for each root operation, that can then be checked by the token
+         *  ***/
+        let mut authorizer = authorizer!(
+            r#"
+            allow if user($id);
+
+            // only the test root operation is available as unauthenticated user
+            allow if query("test");
+            deny if true
+ "#,
+        );
+
+        let operation_type = operation.operation_ty();
+        for root_op in operation.fields(&compiler.db).iter() {
+            match operation_type {
+                OperationType::Query => {
+                    authorizer.add_fact(format!("query(\"{}\")", root_op.name()).as_str())?
+                }
+                OperationType::Mutation => {
+                    authorizer.add_fact(format!("mutation(\"{}\")", root_op.name()).as_str())?
+                }
+                OperationType::Subscription => {
+                    authorizer.add_fact(format!("subscription(\"{}\")", root_op.name()).as_str())?
+                }
+            }
+        }
+
+        /*** Get the token from the request
+         *
+         * If there's no Authorization header, we can still apply the authorizer policies on an unauthenticated request
+         * ***/
+        let opt_token = extract_token(&request.supergraph_request, &self.root)?;
+
+        if let Some(token) = opt_token.as_ref() {
+            authorizer.add_token(token)?;
+        }
+
+        let res = authorizer.authorize();
+        println!("authorizer:\n{}", authorizer.print_world());
+        res?;
+        Ok(())
+    }
+
+    /// called in the subgraph plugin
+    ///
+    /// this attenuates the client token before sending it to the subgraph, to make an attenuated token
+    /// that can only be used to query that subgraph
+    fn attenuate(
+        &self,
+        service_name: &str,
+        request: &mut subgraph::Request,
+    ) -> Result<(), BoxError> {
+        if let Ok(Some(token)) = extract_unverified_token(&request.supergraph_request) {
+            let attenuated_token = token.append(block!(
+                "check if subgraph({subgraph});",
+                subgraph = service_name,
+            ))?;
+
+            request.subgraph_request.headers_mut().insert(
+                "Authorization",
+                format!("Bearer {}", attenuated_token.to_base64()?).parse()?,
+            );
+        }
+
+        Ok(())
+    }
+}
+
+fn extract_token_string(
+    request: &http::Request<graphql::Request>,
+) -> Result<Option<&str>, BoxError> {
+    Ok(match request.headers().get("Authorization") {
+        None => None,
+        Some(value) => {
+            let value = value.to_str()?;
+            println!("Authorization: {}", value);
+            if !value.starts_with("Bearer ") {
+                return Err(Box::<dyn Error + Send + Sync>::from("not a bearer token"));
+            }
+            Some(&value[7..])
+        }
+    })
+}
+
+fn extract_token(
+    request: &http::Request<graphql::Request>,
+    root: &biscuit::PublicKey,
+) -> Result<Option<biscuit::Biscuit>, BoxError> {
+    let opt_token_str = extract_token_string(request)?;
+
+    println!("parsing token from: {:?}", opt_token_str);
+    Ok(match opt_token_str {
+        None => None,
+        Some(s) => Some(biscuit::Biscuit::from_base64(s, root)?),
+    })
+}
+
+fn extract_unverified_token(
+    request: &http::Request<graphql::Request>,
+) -> Result<Option<biscuit::UnverifiedBiscuit>, BoxError> {
+    let opt_token_str = extract_token_string(request)?;
+
+    println!("parsing token from: {:?}", opt_token_str);
+    Ok(match opt_token_str {
+        None => None,
+        Some(s) => Some(biscuit::UnverifiedBiscuit::from_base64(s)?),
+    })
+}
+
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
 struct Conf {
     // Put your plugin configuration here. It will automatically be deserialized from JSON.
@@ -32,6 +173,7 @@ struct Conf {
 
     public_root: String,
 }
+
 // This plugin is a skeleton for doing authentication that requires a remote call.
 #[async_trait::async_trait]
 impl Plugin for Biscuit {
@@ -87,123 +229,6 @@ impl Plugin for Biscuit {
             .service(service)
             .boxed()
     }
-}
-
-impl Biscuit {
-    fn validate_request(&self, request: &mut supergraph::Request) -> Result<(), BoxError> {
-        let compiler = apollo_compiler::ApolloCompiler::new(
-            &request
-                .supergraph_request
-                .body()
-                .query
-                .as_deref()
-                .expect("there should be a query by now"),
-        );
-
-        let ops = compiler.operations();
-
-        let operation = match request.supergraph_request.body().operation_name.as_ref() {
-            None => ops.get(0),
-            Some(name) => ops.iter().find(|op| op.name() == Some(name)),
-        };
-
-        let operation = match operation {
-            None => {
-                return Err(Box::<dyn Error + Send + Sync>::from(
-                    "cannot find operation",
-                ))
-            }
-            Some(op) => op,
-        };
-
-        let mut authorizer = authorizer!(
-            r#"
-            allow if true
- "#,
-        );
-
-        let operation_type = operation.operation_ty();
-        for root_op in operation.fields(&compiler.db).iter() {
-            match operation_type {
-                OperationType::Query => {
-                    authorizer.add_fact(format!("query(\"{}\")", root_op.name()).as_str())?
-                }
-                OperationType::Mutation => {
-                    authorizer.add_fact(format!("mutation(\"{}\")", root_op.name()).as_str())?
-                }
-                OperationType::Subscription => {
-                    authorizer.add_fact(format!("subscription(\"{}\")", root_op.name()).as_str())?
-                }
-            }
-        }
-
-        let opt_token = extract_token(&request.supergraph_request, &self.root)?;
-
-        if let Some(token) = opt_token.as_ref() {
-            authorizer.add_token(token)?;
-        }
-
-        let res = authorizer.authorize();
-        println!("authorizer:\n{}", authorizer.print_world());
-        res?;
-
-        if let Some(token) = extract_token_string(&request.supergraph_request)? {
-            request.context.insert("biscuit", token.to_string())?;
-        }
-
-        Ok(())
-    }
-
-    fn attenuate(
-        &self,
-        service_name: &str,
-        request: &mut subgraph::Request,
-    ) -> Result<(), BoxError> {
-        if let Ok(Some(s)) = request.context.get::<_, String>("biscuit") {
-            let token = biscuit::UnverifiedBiscuit::from_base64(s)?;
-
-            let attenuated_token = token.append(block!(
-                "check if subgraph({subgraph});",
-                subgraph = service_name,
-            ))?;
-
-            request.subgraph_request.headers_mut().insert(
-                "Authorization",
-                format!("Bearer {}", attenuated_token.to_base64()?).parse()?,
-            );
-        }
-
-        Ok(())
-    }
-}
-
-fn extract_token_string(
-    request: &http::Request<graphql::Request>,
-) -> Result<Option<&str>, BoxError> {
-    Ok(match request.headers().get("Authorization") {
-        None => None,
-        Some(value) => {
-            let value = value.to_str()?;
-            println!("Authorization: {}", value);
-            if !value.starts_with("Bearer ") {
-                return Err(Box::<dyn Error + Send + Sync>::from("not a bearer token"));
-            }
-            Some(&value[7..])
-        }
-    })
-}
-
-fn extract_token(
-    request: &http::Request<graphql::Request>,
-    root: &biscuit::PublicKey,
-) -> Result<Option<biscuit::Biscuit>, BoxError> {
-    let opt_token_str = extract_token_string(request)?;
-
-    println!("parsing token from: {:?}", opt_token_str);
-    Ok(match opt_token_str {
-        None => None,
-        Some(s) => Some(biscuit::Biscuit::from_base64(s, root)?),
-    })
 }
 
 // This macro allows us to use it in our plugin registry!
@@ -301,9 +326,13 @@ type Organization
             .await
             .unwrap();
 
-        let token = biscuit!(r#"check if query($query), ["me", "test"].contains($query);"#)
-            .build(&root_keypair)
-            .unwrap();
+        let token = biscuit!(
+            r#"
+        user(1);
+        check if query($query), ["me", "test"].contains($query);"#
+        )
+        .build(&root_keypair)
+        .unwrap();
         let token = token.append(block!(r#"check if query("me")"#)).unwrap();
 
         let request = supergraph::Request::fake_builder()
@@ -359,9 +388,13 @@ type Organization
             .await
             .unwrap();
 
-        let token = biscuit!(r#"check if query($query), ["me", "test"].contains($query);"#)
-            .build(&root_keypair)
-            .unwrap();
+        let token = biscuit!(
+            r#"
+        user(1);
+        check if query($query), ["me", "test"].contains($query);"#
+        )
+        .build(&root_keypair)
+        .unwrap();
         let token = token.append(block!(r#"check if query("me")"#)).unwrap();
 
         let request = supergraph::Request::fake_builder()
@@ -478,9 +511,12 @@ type Organization
             .await
             .unwrap();
 
-        let token = biscuit!(r#"authorized_queries("me");"#)
-            .build(&root_keypair)
-            .unwrap();
+        let token = biscuit!(
+            r#"user(1);
+        "#
+        )
+        .build(&root_keypair)
+        .unwrap();
 
         let request = supergraph::Request::fake_builder()
             .header("Authorization", format!("Bearer {}", token.to_base64()?))
