@@ -1,8 +1,9 @@
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [package]
-name = "biscuit1"
+name = "biscuit-router-plugin"
 version = "0.1.0"
 edition = "2021"
+license = "LicenseRef-ELv2"
 
 [workspace]
 members = [

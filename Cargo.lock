@@ -482,7 +482,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "biscuit1"
+name = "biscuit-router-plugin"
 version = "0.1.0"
 dependencies = [
  "anyhow",
