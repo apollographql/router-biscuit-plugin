@@ -75,9 +75,8 @@ impl Biscuit {
                 OperationType::Mutation => {
                     authorizer.add_fact(format!("mutation(\"{}\")", root_op.name()).as_str())?
                 }
-                OperationType::Subscription => {
-                    authorizer.add_fact(format!("subscription(\"{}\")", root_op.name()).as_str())?
-                }
+                // not supported by the router
+                OperationType::Subscription => {}
             }
         }
 

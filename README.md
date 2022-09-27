@@ -33,7 +33,7 @@ plugins:
 ### Add the authorization policies to the router
 
 The plugin automatically adds the following facts that you can use in token checks:
-- `query("root_operation_name")`, `mutation("root_operation_name")` or `subscription("root_operation_name")`
+- `query("root_operation_name")` or `mutation("root_operation_name")`
 - `time(2022-09-27T12:00:00Z)`
 
 The policies are added as follows:
@@ -126,7 +126,6 @@ That can be tested from Studio or with curl as follows:
 
 ```shell
 curl --request POST \
-    --header 'Accept: multipart/mixed; deferSpec=20220824' \
     --header 'content-type: application/json' \
     --url 'http://127.0.0.1:4000/' \
     --data '{"query":"query {\n  me {\n    name\n  }\n\n  topProducts {\n    name\n  }\n}","variables":{}}'
@@ -182,7 +181,6 @@ This translates to this curl request:
 
 ```shell
 curl --request POST \
-    --header 'Accept: multipart/mixed; deferSpec=20220824' \
     --header 'Authorization: Bearer EnYKDBgDIggKBggKEgIQARIkCAASIK8bnAXtqMr3ZGaahJiF2eWh0MMdWqLg3X9Ld0yEcIvOGkAZqkSfOF0-DA9RgiLuGSUR2OL3yeVs_2mv2VSd1cQP3vDHhKWYt-AkGEPVABnz88J-fjsCZj65-Q2bhc6rK0QOIiIKIMaYRKo660tMRrl2u3spCTDD4q9WXc9-vtS2-_0Rn7So' \
     --header 'content-type: application/json' \
     --url 'http://127.0.0.1:4000/' \
@@ -257,7 +255,6 @@ Now if we try to query `topProducts`:
 
 ```shell
 curl --request POST \
-    --header 'Accept: multipart/mixed; deferSpec=20220824' \
     --header 'Authorization: Bearer EnYKDBgDIggKBggKEgIQARIkCAASIK8bnAXtqMr3ZGaahJiF2eWh0MMdWqLg3X9Ld0yEcIvOGkAZqkSfOF0-DA9RgiLuGSUR2OL3yeVs_2mv2VSd1cQP3vDHhKWYt-AkGEPVABnz88J-fjsCZj65-Q2bhc6rK0QOGqkBCj8KAm1lGAMyDwoNCgIIGxIHCBsSAxiACDImCiQKAggbEgYIBRICCAUaFgoECgIIBQoICgYggMvMmQYKBBoCCAASJAgAEiCibEz5nVfXSwQlXLtvAAjyfuqhIM8a-1MhnjNG1wpwSBpAtVEvMbk4pYKNi8IW5xaTmzqrJxf_BgIGHPjpU9yOupFL7AKpV2bhh3cBxPKJl4r6hj_t4ZaYrwnIRiwTLwZYCiIiCiCmAe9vRGpboNCSeNs_Ncg-J3muj4nlrODjxnfc7F8-ww==' \
     --header 'content-type: application/json' \
     --url 'http://127.0.0.1:4000/' \
