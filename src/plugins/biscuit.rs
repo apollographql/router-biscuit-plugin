@@ -6,7 +6,6 @@ use apollo_router::plugin::PluginInit;
 use apollo_router::register_plugin;
 use apollo_router::services::subgraph;
 use apollo_router::services::supergraph;
-use biscuit::macros::authorizer;
 use biscuit::macros::block;
 use biscuit_auth as biscuit;
 use schemars::JsonSchema;
@@ -16,18 +15,24 @@ use tower::ServiceBuilder;
 use tower::ServiceExt;
 
 use std::error::Error;
+use std::io::Read;
 use std::ops::ControlFlow;
 
 #[derive(Debug, Clone)]
 struct Biscuit {
     root: biscuit::PublicKey,
+    code: String,
 }
 
 impl Biscuit {
     /// called in the supergraph plugin
     ///
     /// rejects a token if a check fails in the token
-    fn validate_request(&self, request: &mut supergraph::Request) -> Result<(), BoxError> {
+    fn validate_request(
+        &self,
+        request: &mut supergraph::Request,
+        authorizer_code: &str,
+    ) -> Result<(), BoxError> {
         /*** Parse the query to observe the requested operation ***/
         let compiler = apollo_compiler::ApolloCompiler::new(
             &request
@@ -57,15 +62,9 @@ impl Biscuit {
          *
          * A fact will be added for each root operation, that can then be checked by the token
          *  ***/
-        let mut authorizer = authorizer!(
-            r#"
-            allow if user($id);
-
-            // only the test root operation is available as unauthenticated user
-            allow if query("test");
-            deny if true
- "#,
-        );
+        let mut authorizer = biscuit::Authorizer::new()?;
+        authorizer.add_code(authorizer_code)?;
+        authorizer.set_time();
 
         let operation_type = operation.operation_ty();
         for root_op in operation.fields(&compiler.db).iter() {
@@ -93,7 +92,7 @@ impl Biscuit {
         }
 
         let res = authorizer.authorize();
-        println!("authorizer:\n{}", authorizer.print_world());
+        println!("authorizer result {:?}:\n{}", res, authorizer.print_world());
         res?;
         Ok(())
     }
@@ -166,12 +165,8 @@ fn extract_unverified_token(
 
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
 struct Conf {
-    // Put your plugin configuration here. It will automatically be deserialized from JSON.
-    // Always put some sort of config here, even if it is just a bool to say that the plugin is enabled,
-    // otherwise the yaml to enable the plugin will be confusing.
-    message: String,
-
     public_root: String,
+    code: String,
 }
 
 // This plugin is a skeleton for doing authentication that requires a remote call.
@@ -180,17 +175,18 @@ impl Plugin for Biscuit {
     type Config = Conf;
 
     async fn new(init: PluginInit<Self::Config>) -> Result<Self, BoxError> {
-        tracing::info!("{}", init.config.message);
-
         let root = biscuit::PublicKey::from_bytes_hex(&init.config.public_root)?;
-        Ok(Biscuit { root })
+        let mut code = String::new();
+        std::fs::File::open(init.config.code)?.read_to_string(&mut code)?;
+
+        Ok(Biscuit { root, code })
     }
 
     fn supergraph_service(&self, service: supergraph::BoxService) -> supergraph::BoxService {
         let this = self.clone();
         ServiceBuilder::new()
             .checkpoint(move |mut request: supergraph::Request| {
-                match this.validate_request(&mut request) {
+                match this.validate_request(&mut request, &this.code) {
                     Ok(()) => Ok(ControlFlow::Continue(request)),
                     Err(e) => Ok(ControlFlow::Break(
                         supergraph::Response::error_builder()
@@ -233,7 +229,7 @@ impl Plugin for Biscuit {
 
 // This macro allows us to use it in our plugin registry!
 // register_plugin takes a group name, and a plugin name.
-register_plugin!("biscuit_1", "biscuit", Biscuit);
+register_plugin!("biscuit", "auth", Biscuit);
 
 #[cfg(test)]
 mod tests {
@@ -313,9 +309,9 @@ type Organization
                     "all": true
                 },
                 "plugins": {
-                    "biscuit_1.biscuit": {
-                        "message" : "Starting my plugin",
+                    "biscuit.auth": {
                         "public_root": root_keypair.public().to_bytes_hex(),
+                        "code": "authorizer.datalog",
                     }
                 }
             }))
@@ -375,9 +371,9 @@ type Organization
                     "all": true
                 },
                 "plugins": {
-                    "biscuit_1.biscuit": {
-                        "message" : "Starting my plugin",
+                    "biscuit.auth": {
                         "public_root": root_keypair.public().to_bytes_hex(),
+                        "code": "authorizer.datalog",
                     }
                 }
             }))
@@ -455,9 +451,9 @@ type Organization
                     "all": true
                 },
                 "plugins": {
-                    "biscuit_1.biscuit": {
-                        "message" : "Starting my plugin",
+                    "biscuit.auth": {
                         "public_root": root_keypair.public().to_bytes_hex(),
+                        "code": "authorizer.datalog",
                     }
                 }
             }))

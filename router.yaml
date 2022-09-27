@@ -1,2 +1,16 @@
+supergraph:
+  listen: 127.0.0.1:4000
+  introspection: true
+  preview_defer_support: true
+sandbox:
+  enabled: true
+homepage:
+  enabled: false
+
+include_subgraph_errors:
+  all: true
+
 plugins:
-  # Add plugin configuration here
+  biscuit.auth:
+    public_root: "36ba0f350d7605e4e4f724f108594cf7ddf55037728d5735cbb9b58366801170"
+    code: authorizer.datalog
