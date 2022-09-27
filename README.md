@@ -324,3 +324,17 @@ Examples:
 if the token provided user id matches the one of the `User` object
 - the organization has a `private` field only accessible if the
  token provided user id matches a user that belongs to the organization
+
+### Third party blocks (not tested yet)
+
+The upcoming [third party blocks](https://github.com/biscuit-auth/biscuit/issues/88) feature
+will allow a token to bring in data signed by external keys, and authorizers to add expectations
+on that data. This could solve an issue that we will see with supergraphs created with graphs
+from various companies: the usual authorization systems would give too much power to the token
+creator, because it could get full access to anything in the subgraphs.
+
+With third party blocks, we could have a token that is assembled from a token created by the
+router's authorization server, and then an aggregation of third party blocks for the various
+subgraphs, obtained from each of the companies with the user's identity. That way they would
+have fine grained way to reduces the rights of the user, independently of the router's
+authorization server.
