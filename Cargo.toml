@@ -8,6 +8,8 @@ license = "LicenseRef-ELv2"
 [workspace]
 members = [
     "xtask",
+    "user",
+    "orga"
 ]
 
 [[bin]]

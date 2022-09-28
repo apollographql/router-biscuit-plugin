@@ -1,0 +1,10 @@
+subgraphs:
+  user:
+    routing_url: http://localhost:4001/
+    schema:
+      subgraph_url: http://localhost:4001
+  orga:
+    routing_url: http://localhost:4002/
+    schema:
+      subgraph_url: http://localhost:4002
+federation_version: 2
