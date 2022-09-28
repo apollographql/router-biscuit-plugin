@@ -438,7 +438,7 @@ checksum = "904dfeac50f3cdaba28fc6f57fdcddb75f49ed61346676a78c4ffe55877802fd"
 [[package]]
 name = "biscuit-auth"
 version = "3.0.0-alpha2"
-source = "git+https://github.com/biscuit-auth/biscuit-rust#46ea0a309046f363961fa2e8d98ba3e0c45c4d1e"
+source = "git+https://github.com/biscuit-auth/biscuit-rust?branch=check-all#6a8f8575bde03d1398ffbe657752c57c8ecab7d6"
 dependencies = [
  "base64 0.13.0",
  "biscuit-parser",
@@ -461,7 +461,7 @@ dependencies = [
 [[package]]
 name = "biscuit-parser"
 version = "0.1.0-alpha2"
-source = "git+https://github.com/biscuit-auth/biscuit-rust#46ea0a309046f363961fa2e8d98ba3e0c45c4d1e"
+source = "git+https://github.com/biscuit-auth/biscuit-rust?branch=check-all#6a8f8575bde03d1398ffbe657752c57c8ecab7d6"
 dependencies = [
  "hex 0.4.3",
  "nom",
@@ -473,7 +473,7 @@ dependencies = [
 [[package]]
 name = "biscuit-quote"
 version = "0.2.0-alpha2"
-source = "git+https://github.com/biscuit-auth/biscuit-rust#46ea0a309046f363961fa2e8d98ba3e0c45c4d1e"
+source = "git+https://github.com/biscuit-auth/biscuit-rust?branch=check-all#6a8f8575bde03d1398ffbe657752c57c8ecab7d6"
 dependencies = [
  "biscuit-parser",
  "proc-macro-error",

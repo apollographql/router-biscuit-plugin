@@ -19,7 +19,7 @@ anyhow = "1.0.58"
 apollo-compiler = "0.2.0"
 apollo-router = "1.0.0"
 async-trait = "0.1.52"
-biscuit-auth = { git = "https://github.com/biscuit-auth/biscuit-rust", version = "3.0.0-alpha2" }
+biscuit-auth = { git = "https://github.com/biscuit-auth/biscuit-rust", version = "3.0.0-alpha2", branch = "check-all" }
 futures = "0.3.21"
 hex = "0.4.3"
 http = "0.2.8"

@@ -221,13 +221,13 @@ created the token. The main policies will still apply, but you can add as many r
 as you want.
 
 So let's attenuate our token. We will add two restrictions to our token:
-- we only accept the `me` root operation
+- we only accept the `me` root operation (and `__schema`, for introspection)
 - we set an expiration date
 
 ```shell
-$ biscuit attenuate --block 'check if query("me"); check if time($time), $time < 2022-09-27T16:32:00Z'  token.bc > attenuated_token.bc
+$ biscuit attenuate --block 'check all query($op), ["__schema", "me"].contains($op); check if time($time), $time < 2022-09-30T16:32:00Z'  token.bc > attenuated_token.bc
 # inspecting it
-$ biscuit inspect --public-key "36ba0f350d7605e4e4f724f108594cf7ddf55037728d5735cbb9b58366801170" attenuated_token.bc 
+$ biscuit inspect --public-key "36ba0f350d7605e4e4f724f108594cf7ddf55037728d5735cbb9b58366801170" attenuated_token.bc
 Authority block:
 == Datalog ==
 user(1);
@@ -239,11 +239,11 @@ user(1);
 
 Block n°1:
 == Datalog ==
-check if query("me");
-check if time($time), $time < 2022-09-27T16:32:00Z;
+check all query($op), ["__schema", "me"].contains($op);
+check if time($time), $time < 2022-09-30T16:32:00Z;
 
 == Revocation id ==
-b5512f31b938a5828d8bc216e716939b3aab2717ff0602061cf8e953dc8eba914bec02a95766e1877701c4f289978afa863fede19698af09c8462c132f06580a
+ff18bb391176b6d7070eecc5e426973348b3a68e01c1f970194cdf5dc71fca7e93c7bfcde4349b97e4a5a82c11cd554bce1cfcdef2367372ebaca46efcda3c01
 
 ==========
 
@@ -251,14 +251,14 @@ b5512f31b938a5828d8bc216e716939b3aab2717ff0602061cf8e953dc8eba914bec02a95766e187
 🙈 Datalog check skipped 🛡️
 ```
 
-Now if we try to query `topProducts`:
+Now if we try to query `me` and `topProducts`:
 
 ```shell
 curl --request POST \
-    --header 'Authorization: Bearer EnYKDBgDIggKBggKEgIQARIkCAASIK8bnAXtqMr3ZGaahJiF2eWh0MMdWqLg3X9Ld0yEcIvOGkAZqkSfOF0-DA9RgiLuGSUR2OL3yeVs_2mv2VSd1cQP3vDHhKWYt-AkGEPVABnz88J-fjsCZj65-Q2bhc6rK0QOGqkBCj8KAm1lGAMyDwoNCgIIGxIHCBsSAxiACDImCiQKAggbEgYIBRICCAUaFgoECgIIBQoICgYggMvMmQYKBBoCCAASJAgAEiCibEz5nVfXSwQlXLtvAAjyfuqhIM8a-1MhnjNG1wpwSBpAtVEvMbk4pYKNi8IW5xaTmzqrJxf_BgIGHPjpU9yOupFL7AKpV2bhh3cBxPKJl4r6hj_t4ZaYrwnIRiwTLwZYCiIiCiCmAe9vRGpboNCSeNs_Ncg-J3muj4nlrODjxnfc7F8-ww==' \
+    --header 'Authorization: Bearer EnYKDBgDIggKBggKEgIQARIkCAASIK8bnAXtqMr3ZGaahJiF2eWh0MMdWqLg3X9Ld0yEcIvOGkAZqkSfOF0-DA9RgiLuGSUR2OL3yeVs_2mv2VSd1cQP3vDHhKWYt-AkGEPVABnz88J-fjsCZj65-Q2bhc6rK0QOGtgBCm4KAm9wCghfX3NjaGVtYQoCbWUYAzIwCiwKAggbEgcIGxIDCIAIGh0KDgoMOgoKAxiBCAoDGIIICgUKAwiACAoEGgIIBRABMiYKJAoCCBsSBggFEgIIBRoWCgQKAggFCggKBiCAtNyZBgoEGgIIABIkCAASIJe_J6Gx9s79Oxq9EmzQLA1ypWii1lUVpoSyJTCL8KQ-GkD_GLs5EXa21wcO7MXkJpczSLOmjgHB-XAZTN9dxx_KfpPHv83kNJuX5KWoLBHNVUvOHPze8jZzcuuspG782jwBIiIKIGeQ8Z2YMHvHafQSpQmGL-x1C5uLpGOr8HlZKN1Q-oj1' \
     --header 'content-type: application/json' \
     --url 'http://127.0.0.1:4000/' \
-    --data '{"query":"query {\n  topProducts {\n    name\n  }\n}","variables":{}}'
+    --data '{"query":"query ExampleQuery {\n  me {\n    name\n  }\n\n  topProducts {\n    name\n  }\n}","variables":{}}'
 ```
 
 We will get as expected:
@@ -276,10 +276,30 @@ We will get as expected:
 And we see in the logs:
 
 ```
-authorizer result Err(FailedLogic(Unauthorized { policy: Allow(1), checks: [Block(FailedBlockCheck { block_id: 1, check_id: 0, rule: "check if query(\"me\")" })] })):
+authorizer result Err(FailedLogic(Unauthorized { policy: Allow(1), checks: [Block(FailedBlockCheck { block_id: 1, check_id: 0, rule: "check all query($op), [\"me\", \"__schema\"].contains($op)" })] }))
 ```
 
-<TODO: adapt to the upcoming `check unless`/`check all` feature>
+While if we did a query only for `me`:
+
+```shell
+curl --request POST \
+    --header 'Authorization: Bearer EnYKDBgDIggKBggKEgIQARIkCAASIK8bnAXtqMr3ZGaahJiF2eWh0MMdWqLg3X9Ld0yEcIvOGkAZqkSfOF0-DA9RgiLuGSUR2OL3yeVs_2mv2VSd1cQP3vDHhKWYt-AkGEPVABnz88J-fjsCZj65-Q2bhc6rK0QOGtgBCm4KAm9wCghfX3NjaGVtYQoCbWUYAzIwCiwKAggbEgcIGxIDCIAIGh0KDgoMOgoKAxiBCAoDGIIICgUKAwiACAoEGgIIBRABMiYKJAoCCBsSBggFEgIIBRoWCgQKAggFCggKBiCAtNyZBgoEGgIIABIkCAASIJe_J6Gx9s79Oxq9EmzQLA1ypWii1lUVpoSyJTCL8KQ-GkD_GLs5EXa21wcO7MXkJpczSLOmjgHB-XAZTN9dxx_KfpPHv83kNJuX5KWoLBHNVUvOHPze8jZzcuuspG782jwBIiIKIGeQ8Z2YMHvHafQSpQmGL-x1C5uLpGOr8HlZKN1Q-oj1' \
+    --header 'content-type: application/json' \
+    --url 'http://127.0.0.1:4000/' \
+    --data '{"query":"query ExampleQuery {\n  me {\n    name\n  }\n}","variables":{}}'
+```
+
+The query succeeds and we receive:
+
+```json
+{
+  "data": {
+    "me": {
+      "name": "Ada Lovelace"
+    }
+  }
+}
+```
 
 ### Attenuated queries to subgraphs
 
