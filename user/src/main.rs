@@ -180,7 +180,6 @@ fn extract_token_string(request: &Request<Body>) -> Result<Option<&str>, BoxErro
         None => None,
         Some(value) => {
             let value = value.to_str()?;
-            println!("Authorization: {}", value);
             if !value.starts_with("Bearer ") {
                 return Err(Box::<dyn Error + Send + Sync>::from("not a bearer token"));
             }

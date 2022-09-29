@@ -7,7 +7,7 @@ The goal here is to explore authorization patterns.
 
 ## Setup
 
-### Install -he biscuit CLI
+### Install the biscuit CLI
 
 Install the biscuit CLI with `cargo install biscuit-cli` or download the [latest release](https://github.com/biscuit-auth/biscuit-cli/releases).
 
