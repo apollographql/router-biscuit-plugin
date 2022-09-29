@@ -48,6 +48,7 @@ type Query
   @join__type(graph: ORGA)
   @join__type(graph: USER)
 {
+  allOrganizations: [Organization!] @join__field(graph: ORGA)
   me: User! @join__field(graph: USER)
 }
 

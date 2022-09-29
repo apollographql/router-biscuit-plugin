@@ -355,9 +355,210 @@ The third block contains the check `check if subgraph("user")`. Now if we try to
 
 ```
 authorizer result Err(FailedLogic(Unauthorized { policy: Allow(1), checks: [Block(FailedBlockCheck { block_id: 2, check_id: 0, rule: "check if subgraph(\"user\")" })] }))```
+```
 
 This check fails because the router does not provide the subgraph fact.
 
+### Mixing authorization contexts: third party blocks
+
+This authorization system puts a lot of trust in the token creator: they can mint
+tokens with any access level possible to the subgraphs. This is concerning in the case
+of supergraphs made from subgraphs coming from multiple origins. How much should the
+subgraphs trust each other? How much should they trust the router operator?
+
+With biscuit's third party blocks though, it is possible to assemble different security
+domains in one token. We can make a token containing information coming from multiple
+parties, and services will be able to require data from some of them to validate the
+request.
+
+Here, we will add an operation to the organizations subgraph, that can only be requested
+if we were explicitely given the permission by the company managing that subgraph. Other
+users will only be able to go through a federated query based on the `me` operation.
+
+First, we will generate a new key pair. That one is controlled by the organizations subgraph.
+
+```shell
+$ biscuit keypair
+Generating a new random keypair
+Private key: 62359062f245505dc6c8f9a0a9c3fd42deb20faf779c763eca6eab9061fdcda0
+Public key: b8a73872297bb052b3a8c9b64a23b127cdfc64ba30d9634c10de8644ee6be13f
+```
+
+Next, we will add the `allOrganizations` operation to the organizations subgraph, that returns
+the entire list of organizations.
+
+```graphql
+type Query
+  @join__type(graph: ORGA)
+  @join__type(graph: USER)
+{
+  me: User! @join__field(graph: USER)
+  allOrganizations: [Organization!]! @join__field(graph: ORGA)
+}
+```
+
+We will also modify the subgraph's policies to filter access to that operation:
+
+```datalog
+subgraph("orga");
+
+allow if user($id), query("_entity");
+allow if query("allorganizations"), orga_service_admin(true) trusting ed25519/b8a73872297bb052b3a8c9b64a23b127cdfc64ba30d9634c10de8644ee6be13f;
+
+allow if query("_service");
+deny if true;
+```
+
+As before, we allow queries for users authenticated with a router token, but
+only for the operations `_entity`, for federation. If an
+operation is not in that list, we have another test: `allow if query("allOrganizations"), orga_service_admin(true) trusting ed25519/b8a73872297bb052b3a8c9b64a23b127cdfc64ba30d9634c10de8644ee6be13f`
+
+This succeeds if the operation is `allOganizations` and there is a fact
+`orga_service_admin(true)` that is provided either by the authorizer, or by
+a third party block cryptographically signed by the key `b8a73872297bb052b3a8c9b64a23b127cdfc64ba30d9634c10de8644ee6be13f`
+(`ed25519` is the name of the signature algorithm).
+
+With this, if we perform the query with the first token:
+
+```graphql
+query {
+  me {
+    id
+    name
+  }
+
+  allOrganizations {
+    id
+    members {
+      id
+    }
+  }
+}
+```
+
+we will get the response:
+
+```json
+{
+  "data": {
+    "me": {
+      "id": "1",
+      "name": "A"
+    },
+    "allOrganizations": null
+  },
+  "errors": [
+    {
+      "message": "authorization failed"
+    }
+  ]
+}
+```
+
+So now, let's make a token that can request that operation.
+
+To create that third party block, we will start from the initial token, and create
+a request for a third party block, that we would "send" to the orga subgraph authority.
+
+```shell
+$ biscuit generate-request token.bc
+CiQIABIgrxucBe2oyvdkZpqEmIXZ5aHQwx1aouDdf0t3TIRwi84=
+```
+
+Now we bring that request to the authority that controls the subgraph's key:
+
+```shell
+$ biscuit generate-third-party-block --private-key "62359062f245505dc6c8f9a0a9c3fd42deb20faf779c763eca6eab9061fdcda0" --block "orga_service_admin(true)" -
+Please input a base64-encoded third-party block request, followed by <enter> and ^D
+CiQIABIgrxucBe2oyvdkZpqEmIXZ5aHQwx1aouDdf0t3TIRwi84=
+CiEKEm9yZ2Ffc2VydmljZV9hZG1pbhgEIgkKBwiACBICMAESaApA0ANXnfGWF24-7M9md9ryxKrBSOQg1IVjA4t0w2czauefS8vCIdEJHGpNYJHiOwUr6NhVvt_FB7Q4OM-idwvvAhIkCAASILinOHIpe7BSs6jJtkojsSfN_GS6MNljTBDehkTua-E_
+```
+
+We can now create a new token from the initial one and the third party block:
+
+```shell
+$ biscuit append-third-party-block --block-contents "CiEKEm9yZ2Ffc2VydmljZV9hZG1pbhgEIgkKBwiACBICMAESaApA0ANXnfGWF24-7M9md9ryxKrBSOQg1IVjA4t0w2czauefS8vCIdEJHGpNYJHiOwUr6NhVvt_FB7Q4OM-idwvvAhIkCAASILinOHIpe7BSs6jJtkojsSfN_GS6MNljTBDehkTua-E_" token.bc > token_3rd_party.bc
+```
+
+Inspecting it, we get:
+
+```
+Authority block:
+== Datalog ==
+user(1);
+
+== Revocation id ==
+19aa449f385d3e0c0f518222ee192511d8e2f7c9e56cff69afd9549dd5c40fdef0c784a598b7e0241843d50019f3f3c27e7e3b02663eb9f90d9b85ceab2b440e
+
+==========
+
+Block n°1, (third party, signed by b8a73872297bb052b3a8c9b64a23b127cdfc64ba30d9634c10de8644ee6be13f):
+== Datalog ==
+orga_service_admin(true);
+
+== Revocation id ==
+95a98478087f0178bf7a2bdbf94d95cdedb9cee3c3c444b16973b6a24372508208ddcd6038a73f7e085b15607f671248d03392c6554dfd66076c422f426a3d07
+
+==========
+
+🙈 Public key check skipped 🔑
+🙈 Datalog check skipped 🛡️
+```
+
+Now, if we use this token with the query:
+
+```graphql
+query {
+  me {
+    id
+    name
+  }
+
+  allOrganizations {
+    id
+    members {
+      id
+    }
+  }
+}
+```
+
+We will get the successful response:
+
+```json
+{
+  "data": {
+    "me": {
+      "id": "1",
+      "name": "A"
+    },
+    "allOrganizations": [
+      {
+        "id": "1",
+        "members": [
+          {
+            "id": "1"
+          },
+          {
+            "id": "2"
+          }
+        ]
+      },
+      {
+        "id": "2",
+        "members": [
+          {
+            "id": "1"
+          },
+          {
+            "id": "2"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
 
 ## Experimentations
 
@@ -376,18 +577,7 @@ that token and query the router, or other subgraphs?
 Using attenuation, the router mints a token that can only be used to query the subgraph,
 and that would not be authorized when querying the router or another subgraph.
 
-### Router level filtering on the response
-
-The token or authorizer policies provide fine grained rules on what kind of information
-is available.
-
-Examples:
-- the `User` type contains a `private` field that is accessible
-if the token provided user id matches the one of the `User` object
-- the organization has a `private` field only accessible if the
- token provided user id matches a user that belongs to the organization
-
-### Third party blocks (not tested yet)
+### Third party blocks
 
 The upcoming [third party blocks](https://github.com/biscuit-auth/biscuit/issues/88) feature
 will allow a token to bring in data signed by external keys, and authorizers to add expectations
@@ -400,3 +590,14 @@ router's authorization server, and then an aggregation of third party blocks for
 subgraphs, obtained from each of the companies with the user's identity. That way they would
 have fine grained way to reduces the rights of the user, independently of the router's
 authorization server.
+
+### Router level filtering on the response (not tested yet)
+
+The token or authorizer policies provide fine grained rules on what kind of information
+is available.
+
+Examples:
+- the `User` type contains a `private` field that is accessible
+if the token provided user id matches the one of the `User` object
+- the organization has a `private` field only accessible if the
+ token provided user id matches a user that belongs to the organization

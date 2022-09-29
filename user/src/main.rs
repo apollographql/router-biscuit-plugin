@@ -31,7 +31,10 @@ async fn handle(req: Request<Body>) -> Result<Response<Body>, Infallible> {
         opt_token,
         r#"
         subgraph("user");
-        allow if user($id)"#,
+
+        allow if user($id);
+        allow if query("_service");
+        deny if true;"#,
     ) {
         Ok(opt) => opt,
         Err(e) => {

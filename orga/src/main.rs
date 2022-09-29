@@ -31,16 +31,22 @@ async fn handle(req: Request<Body>) -> Result<Response<Body>, Infallible> {
         opt_token,
         r#"
         subgraph("orga");
-        allow if user($id)"#,
+
+        allow if user($id), query("_entity");
+        allow if query("allOrganizations"), orga_service_admin(true) trusting ed25519/b8a73872297bb052b3a8c9b64a23b127cdfc64ba30d9634c10de8644ee6be13f;
+
+        allow if query("_service");
+        deny if true;"#,
     ) {
         Ok(opt) => opt,
         Err(e) => {
+            println!("error: {:?}", e);
             return Ok(Response::new(Body::from(
                 serde_json::to_string(&async_graphql::Response::from_errors(vec![
                     async_graphql::ServerError::new(e.to_string(), None),
                 ]))
                 .unwrap(),
-            )))
+            )));
         }
     };
 
@@ -175,6 +181,10 @@ impl Query {
         USERS
             .get(id.0.as_str())
             .ok_or(async_graphql::Error::new("user not found"))
+    }
+
+    async fn all_organizations<'ctx>(&self) -> Option<Vec<&Organization>> {
+        Some(ORGAS.values().collect())
     }
 }
 
