@@ -6,7 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+apollo-compiler = "0.2.0"
 async-graphql = { version = "4.0.14", features = ["tokio"] }
+biscuit-auth = { git = "https://github.com/biscuit-auth/biscuit-rust", version = "3.0.0-alpha2", branch = "check-all" }
 hyper = { version = "0.14.20", features = ["full"] }
 once_cell = "1.15.0"
 serde = "1.0.145"

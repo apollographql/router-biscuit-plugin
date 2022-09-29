@@ -221,11 +221,11 @@ created the token. The main policies will still apply, but you can add as many r
 as you want.
 
 So let's attenuate our token. We will add two restrictions to our token:
-- we only accept the `me` root operation (and `__schema`, for introspection)
+- we only accept the `me` root operation, `__schema` for introspection and `_entities` for federation
 - we set an expiration date
 
 ```shell
-$ biscuit attenuate --block 'check all query($op), ["__schema", "me"].contains($op); check if time($time), $time < 2022-09-30T16:32:00Z'  token.bc > attenuated_token.bc
+$ biscuit attenuate --block 'check all query($op), ["__schema", "_entities", "me"].contains($op); check if time($time), $time < 2022-09-30T16:32:00Z'  token.bc > attenuated_token.bc
 # inspecting it
 $ biscuit inspect --public-key "36ba0f350d7605e4e4f724f108594cf7ddf55037728d5735cbb9b58366801170" attenuated_token.bc
 Authority block:
@@ -239,11 +239,11 @@ user(1);
 
 Block n°1:
 == Datalog ==
-check all query($op), ["__schema", "me"].contains($op);
+check all query($op), ["__schema", "_entities", "me"].contains($op);
 check if time($time), $time < 2022-09-30T16:32:00Z;
 
 == Revocation id ==
-ff18bb391176b6d7070eecc5e426973348b3a68e01c1f970194cdf5dc71fca7e93c7bfcde4349b97e4a5a82c11cd554bce1cfcdef2367372ebaca46efcda3c01
+3de9f2b4b056926539281b8a6d045f21962fe455290441790b3185f7d33eaad1fe26ddbadc951e9a85b2e1abd153359f96855790a6e930489240d4e29abb510e
 
 ==========
 
@@ -255,7 +255,7 @@ Now if we try to query `me` and `topProducts`:
 
 ```shell
 curl --request POST \
-    --header 'Authorization: Bearer EnYKDBgDIggKBggKEgIQARIkCAASIK8bnAXtqMr3ZGaahJiF2eWh0MMdWqLg3X9Ld0yEcIvOGkAZqkSfOF0-DA9RgiLuGSUR2OL3yeVs_2mv2VSd1cQP3vDHhKWYt-AkGEPVABnz88J-fjsCZj65-Q2bhc6rK0QOGtgBCm4KAm9wCghfX3NjaGVtYQoCbWUYAzIwCiwKAggbEgcIGxIDCIAIGh0KDgoMOgoKAxiBCAoDGIIICgUKAwiACAoEGgIIBRABMiYKJAoCCBsSBggFEgIIBRoWCgQKAggFCggKBiCAtNyZBgoEGgIIABIkCAASIJe_J6Gx9s79Oxq9EmzQLA1ypWii1lUVpoSyJTCL8KQ-GkD_GLs5EXa21wcO7MXkJpczSLOmjgHB-XAZTN9dxx_KfpPHv83kNJuX5KWoLBHNVUvOHPze8jZzcuuspG782jwBIiIKIGeQ8Z2YMHvHafQSpQmGL-x1C5uLpGOr8HlZKN1Q-oj1' \
+    --header 'Authorization: Bearer EnYKDBgDIggKBggKEgIQARIkCAASIK8bnAXtqMr3ZGaahJiF2eWh0MMdWqLg3X9Ld0yEcIvOGkAZqkSfOF0-DA9RgiLuGSUR2OL3yeVs_2mv2VSd1cQP3vDHhKWYt-AkGEPVABnz88J-fjsCZj65-Q2bhc6rK0QOGugBCn4KAm9wCghfX3NjaGVtYQoJX2VudGl0aWVzCgJtZRgDMjUKMQoCCBsSBwgbEgMIgAgaIgoTChE6DwoDGIEICgMYgggKAxiDCAoFCgMIgAgKBBoCCAUQATImCiQKAggbEgYIBRICCAUaFgoECgIIBQoICgYggLTcmQYKBBoCCAASJAgAEiB3lMQWAKUvwsMc4XnwY-HdHQySrS9V1U40vHOspX9-EBpAPenytLBWkmU5KBuKbQRfIZYv5FUpBEF5CzGF99M-qtH-Jt263JUemoWy4avRUzWfloVXkKbpMEiSQNTimrtRDiIiCiBO8Eb6ZM5-qi9NVJxZ20xl3MeskbRcLpIUtF6CWg1aKQ==' \
     --header 'content-type: application/json' \
     --url 'http://127.0.0.1:4000/' \
     --data '{"query":"query ExampleQuery {\n  me {\n    name\n  }\n\n  topProducts {\n    name\n  }\n}","variables":{}}'

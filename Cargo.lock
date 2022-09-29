@@ -3096,7 +3096,9 @@ dependencies = [
 name = "orga"
 version = "0.1.0"
 dependencies = [
+ "apollo-compiler",
  "async-graphql",
+ "biscuit-auth",
  "hyper",
  "once_cell",
  "serde",
@@ -5036,7 +5038,9 @@ checksum = "e8db7427f936968176eaa7cdf81b7f98b980b18495ec28f1b5791ac3bfe3eea9"
 name = "user"
 version = "0.1.0"
 dependencies = [
+ "apollo-compiler",
  "async-graphql",
+ "biscuit-auth",
  "hyper",
  "once_cell",
  "serde",
