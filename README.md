@@ -314,6 +314,51 @@ because other subgraphs will have different names
 - if the token is stolen, it cannot be used to query the router either, because the router's
 authorizer does not provide the  `subgraph` fact
 
+Let's try: we extracted the subgtraph sent to the user backend in `subgraph.bc`, if we inspect it,
+we see:
+
+```shell
+Authority block:
+== Datalog ==
+user(1);
+
+== Revocation id ==
+19aa449f385d3e0c0f518222ee192511d8e2f7c9e56cff69afd9549dd5c40fdef0c784a598b7e0241843d50019f3f3c27e7e3b02663eb9f90d9b85ceab2b440e
+
+==========
+
+Block n°1:
+== Datalog ==
+check all query($op), ["__schema", "_entities", "me"].contains($op);
+check if time($time), $time < 2022-09-30T16:32:00Z;
+
+== Revocation id ==
+3de9f2b4b056926539281b8a6d045f21962fe455290441790b3185f7d33eaad1fe26ddbadc951e9a85b2e1abd153359f96855790a6e930489240d4e29abb510e
+
+==========
+
+Block n°2:
+== Datalog ==
+check if subgraph("user");
+
+== Revocation id ==
+b1c8fbc5261d50e685b58a23c74e3bf660e3c66df3773e17b59169929af2285cab522e52fb99d531f7206c289ab1dcb29054f2a3bdd40b33da730b2b60b1da00
+
+==========
+
+✅ Public key check succeeded 🔑
+🙈 Datalog check skipped 🛡️
+```
+
+The third block contains the check `check if subgraph("user")`. Now if we try to use itto query the router, we get the
+"authorization failed" message, and in the router's logs:
+
+```
+authorizer result Err(FailedLogic(Unauthorized { policy: Allow(1), checks: [Block(FailedBlockCheck { block_id: 2, check_id: 0, rule: "check if subgraph(\"user\")" })] }))```
+
+This check fails because the router does not provide the subgraph fact.
+
+
 ## Experimentations
 
 ### Router level authorization on the request
