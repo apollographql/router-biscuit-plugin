@@ -1,4 +1,6 @@
-# Biscuit router plugin
+# Experimental Biscuit router plugin
+
+⚠️  *This is experimental work and not a supported product* ⚠️
 
 This router plugin tests authorization with [Biscuit tokens](https://www.biscuitsec.org/), which support
 public key signatures and offline attenuatin, along with a Datalog based authorization language.
