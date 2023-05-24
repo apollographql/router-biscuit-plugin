@@ -50,6 +50,7 @@ type Query
 {
   allOrganizations: [Organization!] @join__field(graph: ORGA)
   me: User! @join__field(graph: USER)
+  allUsers: [User!]! @join__field(graph: USER)
 }
 
 type User

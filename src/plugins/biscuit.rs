@@ -62,7 +62,7 @@ impl Biscuit {
          *
          * A fact will be added for each root operation, that can then be checked by the token
          *  ***/
-        let mut authorizer = biscuit::Authorizer::new()?;
+        let mut authorizer = biscuit::Authorizer::new();
         authorizer.add_code(authorizer_code)?;
         authorizer.set_time();
 
